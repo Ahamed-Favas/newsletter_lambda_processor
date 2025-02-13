@@ -9,6 +9,9 @@ import functools
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('newsletter-jobStatus')
+
 bedrock = boto3.client(
     service_name='bedrock-runtime',
     region_name="us-east-1"
@@ -79,13 +82,14 @@ def get_ai_summary(item_content, item_link):
 
 def lambda_handler(event, context):
     try:
-        print('Event', json.dumps(event))
-        
-        request_body = json.loads(event['body'])
-        news_items = request_body.get('news', [])
+        job_id = event.get('jobId')
+        logger.info(f"Received jobId: {job_id}")
+
+        input_data = json.loads(event.get('input'))
+        news_items = input_data.get('news', [])
 
         summaries = []
-        
+
         for item in news_items:
             item_link = item.get('Link')
             item_contentClass = item.get('contentClass')
@@ -106,7 +110,7 @@ def lambda_handler(event, context):
             if not elements:
                 logger.warning(f"No elements found with class {item_contentClass} in {item_link}")
                 continue
-    
+
             for element in elements:
                 item_content += element.get_text()
 
@@ -121,25 +125,30 @@ def lambda_handler(event, context):
                 'indexStr': item_index,
                 'description': item_summary
             })
-        
-        return {
-            'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({'summaries': summaries})
-        }
-        
+
+        result = {'summaries': summaries}
+
+        table.update_item(
+            Key={'jobId': job_id},
+            UpdateExpression="SET #s = :status, #r = :result",
+            ExpressionAttributeNames={'#s': 'status', '#r': 'result'},
+            ExpressionAttributeValues={
+                ':status': 'completed',
+                ':result': json.dumps(result)
+            }
+        )
+        return
+
     except Exception as e:
         logger.error("Error processing request: %s", str(e))
-        return {
-            'statusCode': 500,
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            'body': json.dumps({
-                'error': str(e)
-            })
-        }
+        # Update with failure status
+        table.update_item(
+            Key={'jobId': job_id},
+            UpdateExpression="SET #s = :status, #e = :error",
+            ExpressionAttributeNames={'#s': 'status', '#e': 'error'},
+            ExpressionAttributeValues={
+                ':status': 'failed',
+                ':error': str(e)
+            }
+        )
+        return
