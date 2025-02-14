@@ -45,6 +45,8 @@ def get_news_content(url):
     }
     response = requests.get(url, headers=headers, timeout=10)
     response.raise_for_status()
+    if response.text == "":
+        raise ValueError("Empty response text, retrying...")
     return response
 
 @backoff(delay=1, retries=3)
@@ -114,11 +116,11 @@ def lambda_handler(event, context):
             for element in elements:
                 item_content += element.get_text()
 
-            logger.info(f"fetched content for {item_link} : {item_content[:50]}")
+            logger.info(f"fetched content for {item_link} : {item_content[:5]}")
             
             item_summary = get_ai_summary(item_content, item_link)
 
-            logger.info(f"fetched summary for {item_link} : {item_summary[:50]}")
+            logger.info(f"fetched summary for {item_link} : {item_summary[:5]}")
 
             summaries.append({
                 'category': item_category,
